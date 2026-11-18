@@ -2,6 +2,8 @@
 
 from typing import Any, Dict, List, Tuple
 
+from core.solvers.venue import feature_matches
+
 
 def extract_plan_metrics(plan: Dict[str, Any]) -> Dict[str, float]:
     """Expose flat dictionary of plan metrics per Section 16.2."""
@@ -110,7 +112,7 @@ def evaluate_constraints(
 
         elif ctype == "require_feature":
             v_feats = [str(f).lower() for f in (venue.get("features") or [])]
-            matched = any(target == vf or target in vf or vf in target for vf in v_feats)
+            matched = feature_matches(target, v_feats)
             if not matched:
                 v_name = venue.get("name") or venue.get("slug") or "chosen venue"
                 failures.append(
@@ -121,14 +123,25 @@ def evaluate_constraints(
                 )
 
         elif ctype == "forbid_item":
-            chosen_food = str(food.get("slug") or food.get("option") or "").lower()
-            if target and (target == chosen_food or target in chosen_food.split("_") or target in chosen_food):
-                failures.append(
-                    {
-                        "check": "constraints",
-                        "reason": f"Rejected: food option {chosen_food} contains forbidden item {target}",
-                    }
-                )
+            c_area = str(c.get("area") or "food").strip().lower()
+            if c_area == "venue":
+                chosen_venue = str(venue.get("slug") or venue.get("name") or "").lower().replace(" ", "_")
+                if target and (target == chosen_venue or target in chosen_venue or chosen_venue in target):
+                    failures.append(
+                        {
+                            "check": "constraints",
+                            "reason": f"Rejected: forbidden/unavailable venue {chosen_venue} selected",
+                        }
+                    )
+            else:
+                chosen_food = str(food.get("slug") or food.get("option") or "").lower()
+                if target and (target == chosen_food or target in chosen_food.split("_") or target in chosen_food):
+                    failures.append(
+                        {
+                            "check": "constraints",
+                            "reason": f"Rejected: food option {chosen_food} contains forbidden item {target}",
+                        }
+                    )
 
         elif ctype == "schedule_block":
             try:

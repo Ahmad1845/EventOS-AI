@@ -14,13 +14,56 @@ def _humanize_slug(slug: str) -> str:
     return " ".join(out)
 
 
-def _feature_matches(req_feat: str, option_features: List[str]) -> bool:
-    req = req_feat.strip().lower().replace(" ", "_")
+FEATURE_SYNONYM_GROUPS = [
+    {
+        "step_free",
+        "step_free_access",
+        "ramp",
+        "ramp_access",
+        "wheelchair",
+        "wheelchair_access",
+        "ground_floor",
+        "ground_floor_ramp_access",
+        "elevator",
+        "lift",
+        "accessible",
+        "accessibility",
+    },
+    {
+        "generator",
+        "standby_generator",
+        "backup_power",
+        "power_backup",
+        "ups",
+        "solar",
+    },
+]
+
+
+def feature_matches(req_feat: str, option_features: List[str]) -> bool:
+    req = req_feat.strip().lower().replace(" ", "_").replace("-", "_")
+    req_tokens = {t for t in req.split("_") if t}
+    req_groups = [
+        idx
+        for idx, grp in enumerate(FEATURE_SYNONYM_GROUPS)
+        if req in grp or any(t in grp for t in req_tokens) or any(g in req for g in grp)
+    ]
+
     for of in option_features:
-        of_norm = str(of).strip().lower().replace(" ", "_")
+        of_norm = str(of).strip().lower().replace(" ", "_").replace("-", "_")
         if req == of_norm or req in of_norm or of_norm in req:
             return True
+        if req_groups:
+            of_tokens = {t for t in of_norm.split("_") if t}
+            for idx in req_groups:
+                grp = FEATURE_SYNONYM_GROUPS[idx]
+                if of_norm in grp or any(t in grp for t in of_tokens) or any(g in of_norm for g in grp):
+                    return True
     return False
+
+
+def _feature_matches(req_feat: str, option_features: List[str]) -> bool:
+    return feature_matches(req_feat, option_features)
 
 
 def extract_venue_options(winning_facts: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -41,6 +84,7 @@ def extract_venue_options(winning_facts: Dict[str, Any]) -> Dict[str, Dict[str, 
                 "capacity": None,
                 "price": None,
                 "features": [],
+                "available": True,
             },
         )
         if field == "capacity":
@@ -53,14 +97,18 @@ def extract_venue_options(winning_facts: Dict[str, Any]) -> Dict[str, Dict[str, 
                 opt["price"] = int(val)
             except Exception:
                 pass
-        elif field == "feature":
-            if isinstance(val, list):
-                for item in val:
-                    if str(item) not in opt["features"]:
-                        opt["features"].append(str(item))
+        elif field == "available":
+            if isinstance(val, bool):
+                opt["available"] = val
             else:
-                if str(val) not in opt["features"]:
-                    opt["features"].append(str(val))
+                low = str(val).strip().lower()
+                opt["available"] = low not in ("false", "0", "no", "unavailable", "closed", "maintenance")
+        elif field == "feature":
+            raw_items = val if isinstance(val, list) else str(val).split(",")
+            for item in raw_items:
+                clean_item = str(item).strip()
+                if clean_item and clean_item not in opt["features"]:
+                    opt["features"].append(clean_item)
     return options
 
 
@@ -87,11 +135,16 @@ def solve_venue(
         }
 
     req_features: List[str] = []
+    forbidden_venues: List[str] = []
     for c in constraints:
         if c.get("area") == "venue" and c.get("type") == "require_feature" and c.get("hard", True):
             target = str(c.get("target") or "").strip().lower()
             if target and target not in req_features:
                 req_features.append(target)
+        elif c.get("area") == "venue" and c.get("type") == "forbid_item" and c.get("hard", True):
+            target = str(c.get("target") or "").strip().lower().replace(" ", "_")
+            if target and target not in forbidden_venues:
+                forbidden_venues.append(target)
 
     candidates: List[Dict[str, Any]] = []
     rejected: List[Dict[str, Any]] = []
@@ -101,6 +154,7 @@ def solve_venue(
         cap = opt["capacity"]
         price = opt["price"]
         feats = opt["features"]
+        avail = bool(opt.get("available", True))
 
         if cap is None:
             rejected.append(
@@ -126,10 +180,12 @@ def solve_venue(
             continue
 
         reasons: List[str] = []
+        if not avail or any(fv == slug or fv in slug or slug in fv for fv in forbidden_venues):
+            reasons.append("unavailable / under maintenance")
         if cap < headcount:
             reasons.append(f"capacity {cap} < {headcount}")
         for rf in req_features:
-            if not _feature_matches(rf, feats):
+            if not feature_matches(rf, feats):
                 reasons.append(f"missing feature {rf}")
 
         if reasons:

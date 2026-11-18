@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 
 from core.constraints import evaluate_constraints
 from core.factstore import get_winning_facts
+from core.solvers.venue import feature_matches
 
 
 def validate_plan(
@@ -78,8 +79,12 @@ def validate_plan(
     plan_teams = int(judging.get("teams", -1))
     f_unit = int(food.get("unit_price", 0))
     f_deliv = int(food.get("delivery_fee", 0))
+    f_svc_pct = float(food.get("service_charge_percent", 0))
+    f_svc_amt = int(food.get("service_charge_amount", 0))
     f_cost = int(food.get("cost", -1))
-    expected_f_cost = food_qty * f_unit + f_deliv
+    f_sub = food_qty * f_unit + f_deliv
+    expected_svc = round(f_sub * f_svc_pct / (10 ** 2))
+    expected_f_cost = f_sub + expected_svc
 
     j_hon = int(judging.get("honorarium_total", -1))
     expected_j_hon = engaged * raw_rate
@@ -91,6 +96,7 @@ def validate_plan(
     figures_ok = (
         plan_hc == expected_headcount
         and plan_teams == raw_teams
+        and f_svc_amt == expected_svc
         and f_cost == expected_f_cost
         and j_hon == expected_j_hon
         and b_total == b_sum
@@ -138,9 +144,7 @@ def validate_plan(
         if c.get("area") == "venue" and c.get("type") == "require_feature" and c.get("hard", True)
     ]
     v_feats = [str(f).lower() for f in (venue.get("features") or [])]
-    feats_ok = all(
-        any(rf == vf or rf in vf or vf in rf for vf in v_feats) for rf in req_features
-    )
+    feats_ok = all(feature_matches(rf, v_feats) for rf in req_features)
     venue_ok = (
         venue.get("status") == "ok"
         and v_cap >= expected_headcount

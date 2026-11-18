@@ -210,6 +210,8 @@ def build_plan(
             "unit_price": int(food_res.get("unit_price", 0)),
             "quantity": int(food_res.get("quantity", 0)),
             "delivery_fee": int(food_res.get("delivery_fee", 0)),
+            "service_charge_percent": food_res.get("service_charge_percent", 0),
+            "service_charge_amount": int(food_res.get("service_charge_amount", 0)),
             "cost": int(food_res.get("cost", 0)),
         },
         "judging": {

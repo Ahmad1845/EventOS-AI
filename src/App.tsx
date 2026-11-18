@@ -79,10 +79,13 @@ const ROUTER_PREVIEW_RULES = [
 function stripMessageMetadata(rawText: string): string {
   if (!rawText) return '';
   let text = String(rawText).trim();
-  // Strip numbered header line like: 7. From: Student society (WhatsApp) | Date: 13 Nov
-  text = text.replace(/^\d+\.\s*From:[^|\n]*\|\s*Date:[^\n]*\r?\n?/i, '').trim();
-  // Strip single-line header prefix if inline
-  text = text.replace(/^From:[^|\n]*\|\s*Date:[^"\n]*\s*/i, '').trim();
+  // Strip header lines like:
+  //   7. From: Student society (WhatsApp) | Date: 13 Nov
+  //   #1 | From: Registrar's office, email | Date: 6 Nov
+  //   Message 1: ... | Date: ...
+  text = text
+    .replace(/^(?:#?\d+\s*[\.\)|:\-]\s*|message\s+\d+\s*[:\-]\s*)?from:[^\n]*\|\s*date:[^\n]*\r?\n?/i, '')
+    .trim();
   // Strip outer matching straight or smart quotes
   if (
     (text.startsWith('"') && text.endsWith('"')) ||
@@ -1800,9 +1803,16 @@ export default function App() {
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-1.5 text-sm">
                   <div className="font-bold text-slate-900">{food.name || food.option}</div>
                   <div className="text-xs font-mono text-slate-600">
-                    {food.quantity} meals &times; Rs {Number(food.unit_price || 0).toLocaleString()}{' '}
-                    + Rs {Number(food.delivery_fee || 0).toLocaleString()} delivery = Rs{' '}
-                    {Number(food.cost || 0).toLocaleString()}
+                    {food.quantity} meals &times; Rs {Number(food.unit_price || 0).toLocaleString()}
+                    {Number(food.delivery_fee || 0) > 0
+                      ? ` + Rs ${Number(food.delivery_fee || 0).toLocaleString()} delivery`
+                      : ' + free delivery'}
+                    {Number(food.service_charge_amount || 0) > 0
+                      ? ` + ${food.service_charge_percent}% service charge (Rs ${Number(
+                          food.service_charge_amount || 0
+                        ).toLocaleString()})`
+                      : ''}{' '}
+                    = Rs {Number(food.cost || 0).toLocaleString()}
                   </div>
                 </div>
               )}

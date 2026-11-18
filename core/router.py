@@ -34,7 +34,7 @@ def affected_areas(changed_keys: Iterable[str], is_fresh: bool = False) -> List[
             areas.add("budget")
         elif k.startswith("venue.option.") or k == "venue.choice":
             areas.update(["venue", "budget"])
-        elif k.startswith("food.option.") or k in ("food.delivery_fee", "food.quantity"):
+        elif k.startswith("food.option.") or k in ("food.delivery_fee", "food.service_charge_percent", "food.quantity"):
             areas.update(["food", "budget"])
         elif k in ("judging.confirmed", "judging.engaged"):
             areas.update(["judging", "venue", "food", "schedule", "budget"])

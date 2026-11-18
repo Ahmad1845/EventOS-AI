@@ -17,10 +17,12 @@ KEY_VOCABULARY: List[str] = [
     "venue.option.<slug>.capacity",
     "venue.option.<slug>.price",
     "venue.option.<slug>.feature",
+    "venue.option.<slug>.available",
     "venue.choice",
     "food.option.<slug>.unit_price",
     "food.option.<slug>.is_default",
     "food.delivery_fee",
+    "food.service_charge_percent",
     "food.quantity",
     "judging.confirmed",
     "judging.rate",
@@ -31,7 +33,7 @@ KEY_VOCABULARY: List[str] = [
 ]
 
 SYSTEM_PROMPT_TEMPLATE = """Extract event facts into ONE valid JSON object (no markdown/prose). Never plan or calculate. Copy numbers verbatim. English or Roman Urdu.
-Keys: {{KEY_VOCABULARY}}. Slugs: lowercase snake_case, consistent across messages. Hours->minutes for event.duration_minutes; free delivery=0.
+Keys: {{KEY_VOCABULARY}}. Slugs: lowercase snake_case, consistent across messages. Hours->minutes for event.duration_minutes; free delivery=0; % service charge->food.service_charge_percent (e.g. 10).
 
 Schema:
 {"m":[{"id":1,"s":"sender","ch":"email|whatsapp|notice|other","d":"MM-DD","rel":"relevant|irrelevant|unapproved_request"}],"f":[{"m":1,"k":"key","v":0,"u":"unit","kd":"approval|quote|commitment|count|rate|capacity|duration|override|request"}],"c":[{"m":1,"a":"venue|schedule|food|judging|budget","t":"schedule_block|schedule_window|require_feature|forbid_item|metric_limit|other","tg":"target","op":"<=|>=|==","v":0,"h":true,"tx":"rule"}]}
@@ -39,8 +41,9 @@ Schema:
 Rules:
 - Minified single-line JSON (no spaces/newlines). Omit null/empty fields ("u","d","op"). Always emit one "m" entry per msg.
 - Emit facts in "f" for EVERY price, quote, capacity, count, or bill in EVERY msg—even when a later msg updates the same item.
-- rel="irrelevant" ONLY for chitchat/late-arrival notes with zero facts; "unapproved_request"=unapproved ask.
-- budget.committed.<slug>=vendor bills/invoices/ordered costs; budget.approved_extra.<slug>=approved extras; budget.request.<slug>=unapproved asks.
+- rel="irrelevant" ONLY for chitchat/late-arrival/unrelated notices with zero facts; "unapproved_request"=unapproved ask.
+- budget.committed.<slug>=vendor bills/invoices/ordered/paid costs; budget.approved_extra.<slug>=approved extras; budget.request.<slug>=unapproved asks.
+- Venue maintenance/unavailable -> venue.option.<slug>.available=false. Extract venue features (e.g. standby_generator, ramp_access, ground_floor).
 - kd="override" if setting derived values (food.quantity, venue.choice, judging.engaged). Confirmed judges="judging.confirmed" (not engaged).
 - Separate facts per option. Default/standard/regular food gets food.option.<slug>.is_default=true.
 - Constraints: schedule_block (tg=name, v=minutes), schedule_window (tg=start|end, v=HH:MM), require_feature (only if explicitly required), forbid_item, metric_limit."""

@@ -93,14 +93,18 @@ def solve_budget(
         fallbacks = food_res.get("fallback_options") or []
         qty = int(food_res.get("quantity", 0))
         deliv = int(food_res.get("delivery_fee", 0))
+        svc_pct = float(food_res.get("service_charge_percent", 0))
         cur_price = int(food_res.get("unit_price", 0))
         for fb in fallbacks:
             if int(fb["unit_price"]) < cur_price:
-                new_cost = qty * int(fb["unit_price"]) + deliv
+                sub = qty * int(fb["unit_price"]) + deliv
+                svc_amt = round(sub * svc_pct / (10 ** 2))
+                new_cost = sub + svc_amt
                 food_res["option"] = fb["slug"]
                 food_res["slug"] = fb["slug"]
                 food_res["name"] = fb["name"]
                 food_res["unit_price"] = int(fb["unit_price"])
+                food_res["service_charge_amount"] = svc_amt
                 food_res["cost"] = new_cost
                 cur_price = int(fb["unit_price"])
                 if trace:

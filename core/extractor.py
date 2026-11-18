@@ -172,9 +172,9 @@ def normalize_value(val: Any, key: str = "", unit: Optional[str] = None) -> Any:
         num = float(lakh_match.group(1)) * (10 ** 5)
         return int(num) if num.is_integer() else num
 
-    # Direct numeric string (optionally followed by unit like 'minutes', 'seats', 'per head')
+    # Direct numeric string (optionally followed by unit like 'minutes', 'seats', 'per head', '%')
     num_match = re.match(
-        r"^(-?\d+(?:\.\d+)?)(?:\s*(?:minutes?|mins?|seats?|people|students?|teams?|judges?|boxes|per\s+head|each))?$",
+        r"^(-?\d+(?:\.\d+)?)\s*(?:%|percent|minutes?|mins?|seats?|people|students?|teams?|judges?|boxes|per\s+head|each)?$",
         cleaned,
     )
     if num_match:

@@ -52,6 +52,8 @@ def solve_food(
             "unit_price": 0,
             "quantity": headcount,
             "delivery_fee": 0,
+            "service_charge_percent": 0,
+            "service_charge_amount": 0,
             "cost": 0,
             "fallback_options": [],
             "warnings": ["No food options found"],
@@ -79,6 +81,8 @@ def solve_food(
             "unit_price": 0,
             "quantity": headcount,
             "delivery_fee": 0,
+            "service_charge_percent": 0,
+            "service_charge_amount": 0,
             "cost": 0,
             "fallback_options": [],
             "warnings": ["All food options excluded by forbid_item constraints"],
@@ -97,7 +101,11 @@ def solve_food(
     raw_deliv = winning_facts.get("food.delivery_fee", 0)
     delivery_fee = int(raw_deliv) if isinstance(raw_deliv, (int, float)) else 0
 
-    cost = quantity * chosen["unit_price"] + delivery_fee
+    raw_svc = winning_facts.get("food.service_charge_percent", 0)
+    svc_pct = float(raw_svc) if isinstance(raw_svc, (int, float)) else 0.0
+    subtotal = quantity * chosen["unit_price"] + delivery_fee
+    svc_amount = round(subtotal * svc_pct / (10 ** 2))
+    cost = subtotal + svc_amount
 
     return {
         "status": "ok",
@@ -107,6 +115,8 @@ def solve_food(
         "unit_price": chosen["unit_price"],
         "quantity": quantity,
         "delivery_fee": delivery_fee,
+        "service_charge_percent": int(svc_pct) if svc_pct.is_integer() else svc_pct,
+        "service_charge_amount": svc_amount,
         "cost": cost,
         "fallback_options": fallback_chain,
         "override_used": override_qty is not None,

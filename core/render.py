@@ -62,9 +62,14 @@ def format_terminal_output(
     )
 
     # 3. FOOD
+    svc_str = (
+        f" | service_charge={food.get('service_charge_percent')}% (Rs {food.get('service_charge_amount')})"
+        if int(food.get("service_charge_amount") or 0) > 0
+        else ""
+    )
     lines.append(
         f"[3. FOOD]     option={food.get('option')} | quantity={food.get('quantity')} | "
-        f"unit_price=Rs {food.get('unit_price')} | delivery=Rs {food.get('delivery_fee')} | "
+        f"unit_price=Rs {food.get('unit_price')} | delivery=Rs {food.get('delivery_fee')}{svc_str} | "
         f"cost=Rs {food.get('cost')}"
     )
 
@@ -369,7 +374,7 @@ def generate_html_report(
       <h2>2. Food &amp; Catering</h2>
       <div class="stat-big">{_esc(food.get('name') or food.get('option'))} — Rs {int(food.get('cost', 0)):,}</div>
       <div>Quantity: <strong>{_esc(food.get('quantity'))} boxes</strong> &times; Rs {int(food.get('unit_price', 0)):,}/head</div>
-      <div class="muted">Delivery fee: Rs {int(food.get('delivery_fee', 0)):,}</div>
+      <div class="muted">Delivery fee: Rs {int(food.get('delivery_fee', 0)):,}{f" · Service charge ({_esc(food.get('service_charge_percent'))}%): Rs {int(food.get('service_charge_amount', 0)):,}" if int(food.get('service_charge_amount', 0) or 0) > 0 else ""}</div>
     </div>
 
     <div class="card">
