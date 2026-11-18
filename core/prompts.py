@@ -1,4 +1,4 @@
-"""Prompts and canonical vocabularies per Sections 8, 9.3, and 16.2."""
+"""Lean prompts and canonical key vocabulary per Sections 8, 9.3, and 16.2."""
 
 from typing import Any, Dict, List
 
@@ -30,89 +30,27 @@ KEY_VOCABULARY: List[str] = [
     "custom.<area>.<slug>",
 ]
 
-METRIC_VOCABULARY: List[str] = [
-    "event.headcount",
-    "event.students",
-    "event.staff",
-    "event.teams",
-    "venue.capacity",
-    "venue.price",
-    "venue.slack",
-    "food.quantity",
-    "food.unit_price",
-    "food.cost",
-    "judging.engaged",
-    "judging.required",
-    "judging.window_minutes",
-    "judging.honorarium_total",
-    "schedule.total_minutes",
-    "schedule.break_minutes",
-    "budget.total",
-    "budget.cap",
-    "budget.remaining",
-]
+SYSTEM_PROMPT_TEMPLATE = """Extract event facts into ONE valid JSON object (no markdown/prose). Never plan or calculate. Copy numbers verbatim. English or Roman Urdu.
+Keys: {{KEY_VOCABULARY}}. Slugs: lowercase snake_case, consistent across messages. Hours->minutes for event.duration_minutes; free delivery=0.
 
-SYSTEM_PROMPT_TEMPLATE = """You extract structured facts from event-planning messages. Reply with ONE JSON object only.
-No prose, no markdown, no code fences. Do NOT plan, add, subtract, compare, or decide anything.
-Copy numbers exactly as written. Messages can be English or Roman Urdu (Urdu in Latin letters).
+Schema:
+{"m":[{"id":1,"s":"sender","ch":"email|whatsapp|notice|other","d":"MM-DD","rel":"relevant|irrelevant|unapproved_request"}],"f":[{"m":1,"k":"key","v":0,"u":"unit","kd":"approval|quote|commitment|count|rate|capacity|duration|override|request"}],"c":[{"m":1,"a":"venue|schedule|food|judging|budget","t":"schedule_block|schedule_window|require_feature|forbid_item|metric_limit|other","tg":"target","op":"<=|>=|==","v":0,"h":true,"tx":"rule"}]}
 
-For each message output an entry in "messages":
-  id (the number given), sender, channel (email|whatsapp|notice|other), date (YYYY-MM-DD or null),
-  relevance: "relevant" | "irrelevant" | "unapproved_request", reason (max 8 words).
-  "irrelevant" = does not affect venue, schedule, food, judging or budget.
-  "unapproved_request" = someone asks or suggests a spend or change that no approver accepted.
-  Only mark a message "irrelevant" if it contains no capacities, prices, headcounts, rules, or overrides.
-  If a vendor or sender states they changed a quantity, price, or option (even if bad), mark it "relevant" and extract the fact.
-
-For useful information output "facts": {msg, key, value, unit, kind}.
-  Use ONLY these keys when they fit: {{KEY_VOCABULARY}}
-  Use custom.<area>.<slug> otherwise. Slugs are lowercase snake_case.
-  Reuse the SAME slug for the same item in different messages.
-  Convert hours to minutes for event.duration_minutes. Write "free" delivery as value 0.
-  kind is one of: approval (an authority approves or fixes a value), quote (a price offer),
-  commitment (money already ordered or spent), count, rate, capacity, duration,
-  override (a sender tries to set a quantity or choice the plan would normally derive, e.g. food.quantity, venue.choice, judging.engaged), request.
-  Use judging.confirmed when a message states how many judges confirmed or are available. Use judging.engaged ONLY when a sender explicitly overrides how many judges to use.
-  Use food.option.standard_lunch_box (or the exact item name in snake_case) consistently across messages for the same meal option.
-  Give each option its own fact lines. Never merge two options into one fact.
-  If a food option is called standard, regular or default, also output a boolean fact food.option.<slug>.is_default = true.
-  If the same item is mentioned with two prices in different messages, output both.
-
-For rules and limits output "constraints": {msg, area, type, target, op, value, unit, hard, text}.
-  area: venue | schedule | food | judging | budget.
-  type: schedule_block (a break or slot of fixed minutes; target = its name)
-      | schedule_window (target "start" or "end", value "HH:MM")
-      | require_feature (target = feature the venue must have, only when explicitly required for the event)
-      | forbid_item (target = something that must not be in the food)
-      | metric_limit (target = a plan metric, op one of <=, >=, ==, value number)
-      | other (describe in text)
-  hard is true unless the sender says it is a preference.
-  Plan metrics you may target: {{METRIC_VOCABULARY}}
-
-{{KNOWN_KEYS_LINE}}
-Output shape: {"messages":[...],"facts":[...],"constraints":[...]}"""
+Rules:
+- Minified single-line JSON (no spaces/newlines). Omit null/empty fields ("u","d","op"). Always emit one "m" entry per msg.
+- Emit facts in "f" for EVERY price, quote, capacity, count, or bill in EVERY msg—even when a later msg updates the same item.
+- rel="irrelevant" ONLY for chitchat/late-arrival notes with zero facts; "unapproved_request"=unapproved ask.
+- budget.committed.<slug>=vendor bills/invoices/ordered costs; budget.approved_extra.<slug>=approved extras; budget.request.<slug>=unapproved asks.
+- kd="override" if setting derived values (food.quantity, venue.choice, judging.engaged). Confirmed judges="judging.confirmed" (not engaged).
+- Separate facts per option. Default/standard/regular food gets food.option.<slug>.is_default=true.
+- Constraints: schedule_block (tg=name, v=minutes), schedule_window (tg=start|end, v=HH:MM), require_feature (only if explicitly required), forbid_item, metric_limit."""
 
 
 def build_system_prompt(known_keys: List[str]) -> str:
-    known_line = ""
-    if known_keys:
-        known_line = (
-            "Existing keys (reuse the exact key when a fact updates one): "
-            + json.dumps(known_keys)
-        )
-    prompt = SYSTEM_PROMPT_TEMPLATE.replace(
-        "{{KEY_VOCABULARY}}", ", ".join(KEY_VOCABULARY)
-    ).replace("{{METRIC_VOCABULARY}}", ", ".join(METRIC_VOCABULARY)).replace(
-        "{{KNOWN_KEYS_LINE}}", known_line
-    )
-    return prompt.strip()
-
-
-import json
+    # known_keys intentionally omitted to keep prompts lean; Python fuzzy_match_key handles aliases
+    _ = known_keys
+    return SYSTEM_PROMPT_TEMPLATE.replace("{{KEY_VOCABULARY}}", ", ".join(KEY_VOCABULARY)).strip()
 
 
 def build_user_prompt(blocks: List[Dict[str, Any]]) -> str:
-    parts: List[str] = []
-    for b in blocks:
-        parts.append(f"MESSAGE {b['id']}:\n{b['text']}")
-    return "\n\n".join(parts)
+    return "\n".join(f"[{b['id']}] {b['text']}" for b in blocks)

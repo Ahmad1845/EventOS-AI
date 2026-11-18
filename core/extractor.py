@@ -293,10 +293,20 @@ class Extractor:
             raise ExtractionFailed("Extractor output root is not a JSON object")
 
         block_map = {b["id"]: b["text"] for b in blocks}
-        raw_messages = parsed.get("messages") if isinstance(parsed.get("messages"), list) else []
-        raw_facts = parsed.get("facts") if isinstance(parsed.get("facts"), list) else []
+        raw_messages = (
+            parsed.get("m")
+            if isinstance(parsed.get("m"), list)
+            else (parsed.get("messages") if isinstance(parsed.get("messages"), list) else [])
+        )
+        raw_facts = (
+            parsed.get("f")
+            if isinstance(parsed.get("f"), list)
+            else (parsed.get("facts") if isinstance(parsed.get("facts"), list) else [])
+        )
         raw_constraints = (
-            parsed.get("constraints") if isinstance(parsed.get("constraints"), list) else []
+            parsed.get("c")
+            if isinstance(parsed.get("c"), list)
+            else (parsed.get("constraints") if isinstance(parsed.get("constraints"), list) else [])
         )
 
         # Normalize messages
@@ -306,23 +316,32 @@ class Extractor:
             if not isinstance(m, dict):
                 continue
             try:
-                m_id = int(m.get("id", 0))
+                m_id = int(m.get("id", m.get("i", 0)))
             except Exception:
                 continue
             if m_id <= 0:
                 continue
             seen_ids.add(m_id)
-            rel = str(m.get("relevance", "relevant")).strip().lower()
+            rel = str(m.get("rel", m.get("relevance", "relevant"))).strip().lower()
             if rel not in VALID_RELEVANCE:
                 rel = "relevant"
+            raw_d = m.get("d", m.get("date"))
+            raw_reason = str(m.get("reason") or "").strip()
+            if not raw_reason:
+                if rel == "irrelevant":
+                    raw_reason = "no planning impact"
+                elif rel == "unapproved_request":
+                    raw_reason = "unapproved request"
+                else:
+                    raw_reason = "facts extracted"
             clean_messages.append(
                 {
                     "id": m_id,
-                    "sender": str(m.get("sender") or "Unknown").strip(),
-                    "channel": str(m.get("channel") or "other").strip().lower(),
-                    "date": str(m.get("date")).strip() if m.get("date") else None,
+                    "sender": str(m.get("s") or m.get("sender") or "Unknown").strip(),
+                    "channel": str(m.get("ch") or m.get("channel") or "other").strip().lower(),
+                    "date": str(raw_d).strip() if raw_d else None,
                     "relevance": rel,
-                    "reason": str(m.get("reason") or "").strip(),
+                    "reason": raw_reason,
                 }
             )
 
@@ -336,7 +355,7 @@ class Extractor:
                         "channel": "other",
                         "date": None,
                         "relevance": "relevant",
-                        "reason": "extracted message",
+                        "reason": "facts extracted",
                     }
                 )
         clean_messages.sort(key=lambda x: x["id"])
@@ -346,23 +365,24 @@ class Extractor:
         for f in raw_facts:
             if not isinstance(f, dict):
                 continue
-            raw_key = f.get("key")
-            raw_val = f.get("value")
+            raw_key = f.get("k", f.get("key"))
+            raw_val = f.get("v", f.get("value"))
             if raw_key is None or str(raw_key).strip() == "" or raw_val is None or str(raw_val).strip() == "":
                 self.trace.python_event("EXTRACT", f"dropped incomplete fact: {f}")
                 continue
             try:
-                msg_id = int(f.get("msg", 1))
+                msg_id = int(f.get("m", f.get("msg", 1)))
             except Exception:
                 msg_id = 1
 
             norm_k = normalize_key(str(raw_key))
-            unit = str(f.get("unit")).strip() if f.get("unit") is not None else None
+            raw_u = f.get("u", f.get("unit"))
+            unit = str(raw_u).strip() if raw_u is not None else None
             norm_v = normalize_value(raw_val, key=norm_k, unit=unit)
             if norm_k.endswith(".feature") and isinstance(norm_v, str):
                 norm_v = to_snake_slug(norm_v)
 
-            kind = str(f.get("kind") or "count").strip().lower()
+            kind = str(f.get("kd", f.get("kind")) or "count").strip().lower()
             if kind not in VALID_FACT_KINDS:
                 kind = "count"
 
@@ -372,7 +392,6 @@ class Extractor:
 
             grounded = True
             if isinstance(norm_v, (int, float)) and not isinstance(norm_v, bool):
-                src_text = block_map.get(msg_id, "")
                 grounded = check_grounding(float(norm_v), src_text, key=norm_k)
                 if not grounded:
                     self.trace.python_event(
@@ -396,35 +415,39 @@ class Extractor:
         for c in raw_constraints:
             if not isinstance(c, dict):
                 continue
-            area = str(c.get("area") or "").strip().lower()
-            ctype = str(c.get("type") or "").strip().lower()
+            area = str(c.get("a", c.get("area")) or "").strip().lower()
+            ctype = str(c.get("t", c.get("type")) or "").strip().lower()
             if area not in VALID_AREAS or ctype not in VALID_CONSTRAINT_TYPES:
                 self.trace.python_event("EXTRACT", f"dropped invalid constraint: {c}")
                 continue
             try:
-                msg_id = int(c.get("msg", 1))
+                msg_id = int(c.get("m", c.get("msg", 1)))
             except Exception:
                 msg_id = 1
-            target = str(c.get("target") or "").strip()
+            target = str(c.get("tg", c.get("target")) or "").strip()
             if ctype == "metric_limit":
                 target = normalize_key(target)
             elif ctype in ("require_feature", "forbid_item", "schedule_block"):
                 target = to_snake_slug(target) if target else "item"
 
-            c_unit = str(c.get("unit")).strip() if c.get("unit") is not None else None
-            c_val = normalize_value(c.get("value"), key=target, unit=c_unit)
-            hard = bool(c.get("hard", True))
+            c_raw_u = c.get("u", c.get("unit"))
+            c_unit = str(c_raw_u).strip() if c_raw_u is not None else None
+            c_raw_v = c.get("v", c.get("value"))
+            c_val = normalize_value(c_raw_v, key=target, unit=c_unit)
+            hard = bool(c.get("h", c.get("hard", True)))
+            c_op = c.get("op")
+            c_txt = c.get("tx", c.get("text"))
             clean_constraints.append(
                 {
                     "msg": msg_id,
                     "area": area,
                     "type": ctype,
                     "target": target,
-                    "op": str(c.get("op")).strip() if c.get("op") else None,
+                    "op": str(c_op).strip() if c_op else None,
                     "value": c_val,
                     "unit": c_unit,
                     "hard": hard,
-                    "text": str(c.get("text") or "").strip(),
+                    "text": str(c_txt or "").strip(),
                 }
             )
 

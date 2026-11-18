@@ -45,36 +45,54 @@ type DetailModalType =
 
 const ROUTER_PREVIEW_RULES = [
   {
+    plainTitle: 'Finance or committed bill changed',
     keyPattern: 'budget.committed.*, budget.cap',
-    example: 'Finance line item bill update or budget cap adjustment',
     areas: ['budget'],
   },
   {
+    plainTitle: 'Caterer meal price or count changed',
     keyPattern: 'food.option.*, food.quantity',
-    example: 'Caterer per-head price change or meal quantity override',
     areas: ['food', 'budget'],
   },
   {
+    plainTitle: 'Venue option or required feature changed',
     keyPattern: 'venue.option.*, constraint.venue.*',
-    example: 'New venue quote or required hall feature (e.g. generator)',
     areas: ['venue', 'budget'],
   },
   {
+    plainTitle: 'Schedule length or break changed',
     keyPattern: 'event.duration_minutes, constraint.schedule.*',
-    example: 'Added break block or schedule duration change',
     areas: ['schedule'],
   },
   {
+    plainTitle: 'Confirmed judge count changed',
     keyPattern: 'judging.confirmed, judging.engaged',
-    example: 'Confirmed judge count changed (cascades to total headcount)',
     areas: ['judging', 'venue', 'food', 'schedule', 'budget'],
   },
   {
+    plainTitle: 'Student count or team size changed',
     keyPattern: 'event.students, event.team_size',
-    example: 'Student count or team size changed (cascades to all 5 areas)',
     areas: ['judging', 'venue', 'food', 'schedule', 'budget'],
   },
 ];
+
+function stripMessageMetadata(rawText: string): string {
+  if (!rawText) return '';
+  let text = String(rawText).trim();
+  // Strip numbered header line like: 7. From: Student society (WhatsApp) | Date: 13 Nov
+  text = text.replace(/^\d+\.\s*From:[^|\n]*\|\s*Date:[^\n]*\r?\n?/i, '').trim();
+  // Strip single-line header prefix if inline
+  text = text.replace(/^From:[^|\n]*\|\s*Date:[^"\n]*\s*/i, '').trim();
+  // Strip outer matching straight or smart quotes
+  if (
+    (text.startsWith('"') && text.endsWith('"')) ||
+    (text.startsWith('“') && text.endsWith('”')) ||
+    (text.startsWith("'") && text.endsWith("'"))
+  ) {
+    text = text.slice(1, -1).trim();
+  }
+  return text;
+}
 
 function formatDurationLabel(minutes: number): string {
   if (!minutes) return '0 Hours';
@@ -265,153 +283,189 @@ export default function App() {
   const spent = Number(budget.total || 0);
   const budgetPct = cap > 0 ? Math.min(100, Math.round((spent / cap) * 100)) : 0;
 
-  // Map validator checks into the 6 official Brief checks
+  // Official 6 checks (exact brief wording) + 2 extra safeguards
   const findCheck = (id: string) => checks.find((c) => c.id === id);
-  const systemChecks = [
+  const officialChecks = [
+    {
+      id: 'figures',
+      label: 'Correct figures',
+      passed: findCheck('figures')?.passed ?? false,
+      explanation:
+        findCheck('figures')?.detail ||
+        `Headcount (${hc.total}), food cost, honorarium, and budget sum are consistent`,
+    },
     {
       id: 'budget',
-      label: 'Budget',
+      label: 'Within budget',
       passed: findCheck('budget')?.passed ?? false,
       explanation:
         findCheck('budget')?.detail ||
         `Total Rs ${spent.toLocaleString()} within cap Rs ${cap.toLocaleString()}`,
     },
     {
-      id: 'capacity',
-      label: 'Capacity',
+      id: 'venue_fit',
+      label: 'Venue fits',
       passed: findCheck('venue_fit')?.passed ?? false,
       explanation:
         findCheck('venue_fit')?.detail ||
         `${venue.name || 'Venue'} seats ${venue.capacity || 0} for ${hc.total} attendees`,
     },
     {
-      id: 'food',
-      label: 'Food',
-      passed: (findCheck('floors')?.passed ?? true) && food.status === 'ok',
-      explanation: `${food.quantity || 0} meals ordered for ${hc.total} attendees (Rs ${Number(food.cost || 0).toLocaleString()})`,
-    },
-    {
-      id: 'judges',
-      label: 'Judges',
-      passed: findCheck('judges')?.passed ?? false,
-      explanation:
-        findCheck('judges')?.detail ||
-        `${judging.engaged || 0} judges assigned across ${judging.teams || 0} teams`,
-    },
-    {
       id: 'schedule',
-      label: 'Schedule',
+      label: 'Schedule valid',
       passed: findCheck('schedule')?.passed ?? false,
       explanation:
         findCheck('schedule')?.detail ||
         `${(schedule.blocks || []).length} blocks totaling ${schedule.duration_minutes || 0} minutes`,
     },
     {
-      id: 'rules',
-      label: 'Rules',
-      passed:
-        (findCheck('constraints')?.passed ?? true) &&
-        (findCheck('figures')?.passed ?? true) &&
-        (findCheck('coverage')?.passed ?? true),
+      id: 'judges',
+      label: 'Enough judges',
+      passed: findCheck('judges')?.passed ?? false,
       explanation:
-        findCheck('constraints')?.detail || 'All 5 areas covered and figures verified',
+        findCheck('judges')?.detail ||
+        `${judging.engaged || 0} judges assigned across ${judging.teams || 0} teams`,
+    },
+    {
+      id: 'coverage',
+      label: 'All areas covered',
+      passed: findCheck('coverage')?.passed ?? false,
+      explanation:
+        findCheck('coverage')?.detail ||
+        'Venue, schedule, food, judging, and budget all planned',
     },
   ];
-  const passedSystemChecks = systemChecks.filter((c) => c.passed).length;
+  const extraSafeguards = [
+    {
+      id: 'constraints',
+      label: 'Constraints',
+      passed: findCheck('constraints')?.passed ?? true,
+      explanation: findCheck('constraints')?.detail || 'Hard venue, food, and schedule rules met',
+    },
+    {
+      id: 'floors',
+      label: 'Quantity & capacity floors',
+      passed: findCheck('floors')?.passed ?? true,
+      explanation:
+        findCheck('floors')?.detail ||
+        `${food.quantity || 0} meals >= ${hc.total} people; venue capacity >= ${hc.total}`,
+    },
+  ];
+  const passedOfficialChecks = officialChecks.filter((c) => c.passed).length;
 
-  // Build unified GitHub-style activity feed from real state (most recent/important first)
+  // Build unified Activity feed with ONE mutually exclusive status per message, sorted newest first (# descending)
+  type MessageBadgeStatus = 'applied' | 'superseded' | 'excluded' | 'ignored' | 'rejected';
   interface ActivityItem {
     id: string;
-    status: 'success' | 'rejected' | 'excluded' | 'ignored';
+    seq: number;
+    status: MessageBadgeStatus;
+    badgeLabel: string;
     title: string;
     detail: string;
-    rawText?: string;
-    sender?: string;
-    date?: string;
+    bodyQuote: string;
+    sender: string;
+    channel: string;
+    date: string;
   }
 
-  const activityFeed: ActivityItem[] = [];
+  const activityFeed: ActivityItem[] = [...stateMessages]
+    .sort((a, b) => Number(b.seq || 0) - Number(a.seq || 0))
+    .map((m) => {
+      const seq = Number(m.seq || 0);
+      const meta = m.meta || {};
+      const sender = String(meta.sender || 'Unknown');
+      const channel = String(meta.channel || 'message');
+      const date = String(m.resolved_date || '');
+      const bodyQuote = stripMessageMetadata(m.text || '');
 
-  // 1. Rejections (highest priority for judges)
-  [...rejections].reverse().forEach((rej, idx) => {
-    activityFeed.push({
-      id: `rej-${rej.seq}-${idx}`,
-      status: 'rejected',
-      title: `${rej.sender} update rejected`,
-      detail: `Reason: ${rej.reason.replace('Rejected: ', '')} Plan unchanged.`,
-      rawText: rej.text,
-      sender: rej.sender,
-    });
-  });
+      const rejRecord = rejections.find((r) => Number(r.seq) === seq);
+      const emittedFacts = stateFacts.filter((f) => Number(f.seq) === seq);
+      const supersededOlder = stateFacts.filter((f) => Number(f.superseded_by) === seq);
 
-  // 2. Fact overrides / updates (e.g. printing cost updated, lunch box price updated)
-  const resolvedFacts = stateFacts.filter((f) => f.superseded_by !== null);
-  [...resolvedFacts].reverse().forEach((oldFact, idx) => {
-    const newerFact = stateFacts.find(
-      (f) => f.key === oldFact.key && f.seq === oldFact.superseded_by
-    );
-    if (newerFact) {
-      const shortKey = oldFact.key.split('.').pop()?.replace(/_/g, ' ');
-      activityFeed.push({
-        id: `res-${idx}`,
-        status: 'success',
-        title: `${newerFact.sender || 'Update'} updated ${shortKey}`,
-        detail: `Rs ${Number(oldFact.value || 0).toLocaleString()} → Rs ${Number(newerFact.value || 0).toLocaleString()} (newer message applied)`,
-        sender: newerFact.sender,
-        date: newerFact.date,
-      });
-    }
-  });
+      let status: MessageBadgeStatus = (m.status as MessageBadgeStatus) || 'applied';
+      if (rejRecord) status = 'rejected';
 
-  // 3. Excluded unapproved requests
-  excluded.forEach((ex, idx) => {
-    activityFeed.push({
-      id: `ex-${idx}`,
-      status: 'excluded',
-      title: `${ex.item} request excluded (Rs ${Number(ex.amount || 0).toLocaleString()})`,
-      detail: `Reason: ${ex.reason}`,
-    });
-  });
+      let badgeLabel = 'Applied';
+      let detail = String(meta.reason || m.status_detail || 'Applied to plan');
 
-  // 4. Applied messages
-  [...stateMessages]
-    .filter((m) => m.status === 'applied')
-    .reverse()
-    .forEach((m) => {
-      const sender = m.meta?.sender || 'Source';
-      const reason = m.meta?.reason || 'Applied to plan';
-      activityFeed.push({
-        id: `msg-${m.seq}`,
-        status: 'success',
-        title: `${sender} — ${reason}`,
-        detail: `Message #${m.seq} applied`,
-        rawText: m.text,
+      if (status === 'rejected') {
+        badgeLabel = 'Rejected';
+        detail = rejRecord
+          ? `${rejRecord.reason.replace(/^Rejected:\s*/i, '')} Plan unchanged.`
+          : 'Rejected by validation safeguard. Plan unchanged.';
+      } else if (status === 'ignored') {
+        badgeLabel = 'Ignored';
+        detail = meta.reason || 'No planning impact';
+      } else if (status === 'excluded') {
+        badgeLabel = 'Excluded';
+        const reqFact = emittedFacts.find((f) => f.kind === 'request');
+        const reqAmt = reqFact ? ` (Rs ${Number(reqFact.value || 0).toLocaleString()})` : '';
+        detail = `Unapproved request${reqAmt} — excluded from budget`;
+      } else if (status === 'superseded') {
+        const supList: number[] =
+          Array.isArray(m.superseded_by) && m.superseded_by.length > 0
+            ? m.superseded_by
+            : Array.from(
+                new Set(
+                  emittedFacts
+                    .map((f) => f.superseded_by)
+                    .filter((x) => x !== null && x !== undefined)
+                    .map((x) => Number(x))
+                )
+              );
+        badgeLabel =
+          supList.length > 0 ? `Superseded by ${supList.map((s) => `#${s}`).join(', ')}` : 'Superseded';
+        detail = 'Replaced by newer confirmed update';
+      } else {
+        badgeLabel = 'Applied';
+        if (supersededOlder.length > 0) {
+          const diffs = supersededOlder.slice(0, 2).map((oldF) => {
+            const newF = emittedFacts.find((nf) => nf.key === oldF.key) || emittedFacts[0];
+            const kName = String(oldF.key || '').split('.').pop()?.replace(/_/g, ' ') || 'value';
+            const oldValStr =
+              typeof oldF.value === 'number' ? `Rs ${oldF.value.toLocaleString()}` : String(oldF.value);
+            const newValStr =
+              newF && typeof newF.value === 'number'
+                ? `Rs ${newF.value.toLocaleString()}`
+                : String(newF?.value ?? '');
+            return `Updated ${kName}: ${oldValStr} → ${newValStr}`;
+          });
+          detail = diffs.join(' · ');
+        } else if (m.status_detail && m.status_detail !== 'Applied to plan') {
+          detail = m.status_detail;
+        }
+      }
+
+      return {
+        id: `msg-${seq}`,
+        seq,
+        status,
+        badgeLabel,
+        title: `Message #${seq} · ${sender}`,
+        detail,
+        bodyQuote,
         sender,
-        date: m.resolved_date,
-      });
-    });
-
-  // 5. Ignored messages
-  stateMessages
-    .filter((m) => m.status === 'ignored')
-    .forEach((m) => {
-      activityFeed.push({
-        id: `ig-${m.seq}`,
-        status: 'ignored',
-        title: `${m.meta?.sender || 'Message'} note ignored`,
-        detail: m.meta?.reason || 'No planning impact',
-        rawText: m.text,
-        sender: m.meta?.sender,
-      });
+        channel,
+        date,
+      };
     });
 
   // Dynamic Judge Mode plain-English reasoning bullets (strictly derived from state/plan)
   const judgeReasons: string[] = [];
   if (venue.name) {
-    const firstRejVenue = (venue.rejected_options || [])[0];
-    if (firstRejVenue) {
+    const rejParts = (venue.rejected_options || []).map(
+      (r: any) => `${r.name} (${r.reason}) cannot fit ${hc.total} people`
+    );
+    const skipList = venue.skipped_fitting || [];
+    let skipStr = '';
+    if (skipList.length > 0) {
+      const names = skipList.map((s: any) => s.name).join(' and ');
+      skipStr = `${names} also fit but cost more`;
+    }
+    const reasonClauses = [...rejParts, ...(skipStr ? [skipStr] : [])];
+    if (reasonClauses.length > 0) {
       judgeReasons.push(
-        `Venue selected: ${venue.name} (${venue.capacity} seats, Rs ${Number(venue.price || 0).toLocaleString()}) because ${firstRejVenue.name} (${firstRejVenue.reason}) cannot fit ${hc.total} people.`
+        `Venue selected: ${venue.name} (${venue.capacity} seats, Rs ${Number(venue.price || 0).toLocaleString()}) — ${reasonClauses.join('; ')}.`
       );
     } else {
       judgeReasons.push(
@@ -427,7 +481,7 @@ export default function App() {
   if (excluded.length > 0) {
     excluded.forEach((ex) => {
       judgeReasons.push(
-        `${ex.item} request (Rs ${Number(ex.amount || 0).toLocaleString()}) ignored because ${ex.reason}.`
+        `${ex.item} request (Rs ${Number(ex.amount || 0).toLocaleString()}) excluded because ${ex.reason}.`
       );
     });
   }
@@ -446,7 +500,7 @@ export default function App() {
   if (rejections.length > 0) {
     rejections.forEach((rej) => {
       judgeReasons.push(
-        `Rejected ${rej.sender} change: ${rej.reason.replace('Rejected: ', '')} (plan kept valid).`
+        `Rejected ${rej.sender} change: ${rej.reason.replace(/^Rejected:\s*/i, '')} (plan kept valid).`
       );
     });
   }
@@ -564,8 +618,8 @@ export default function App() {
             <div className="flex items-center justify-between border-b border-slate-100 pb-5">
               <div>
                 <div className="text-xs font-medium text-[#64748B]">Event Summary</div>
-                <h1 className="text-2xl font-bold tracking-tight text-[#0F172A] font-display mt-0.5">
-                  EventOS AI
+                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#0F172A] font-display mt-0.5">
+                  Mind to Machine Hackathon: Event Plan
                 </h1>
               </div>
               <div
@@ -639,10 +693,10 @@ export default function App() {
               </div>
             </div>
 
-            {/* AI Decisions (Plain-English Reasoning) */}
+            {/* Decisions (computed in code) */}
             <div className="border-t border-slate-100 pt-6 space-y-2.5">
               <div className="text-xs font-semibold text-[#64748B] uppercase tracking-wider">
-                AI Decisions
+                Decisions (computed in code)
               </div>
               <ul className="space-y-2 text-sm text-[#0F172A] leading-relaxed">
                 {judgeReasons.map((line, i) => (
@@ -654,12 +708,12 @@ export default function App() {
               </ul>
             </div>
 
-            {/* Rejected Updates Callout (Required by Brief when conflicts occur) */}
-            {rejections.length > 0 && (
-              <div className="border-t border-slate-100 pt-6 space-y-2.5">
-                <div className="text-xs font-semibold text-[#F97316] uppercase tracking-wider">
-                  Rejected Updates ({rejections.length})
-                </div>
+            {/* Rejected Updates Callout */}
+            <div className="border-t border-slate-100 pt-6 space-y-2.5">
+              <div className="text-xs font-semibold text-[#64748B] uppercase tracking-wider">
+                Rejected Updates ({rejections.length})
+              </div>
+              {rejections.length > 0 ? (
                 <div className="space-y-2">
                   {rejections.map((rej, idx) => (
                     <div
@@ -667,16 +721,18 @@ export default function App() {
                       className="p-3.5 bg-orange-50/70 border border-[#F97316]/30 rounded-xl text-xs text-[#0F172A] space-y-1"
                     >
                       <div className="font-semibold text-orange-950">
-                        ✗ {rej.sender}: &ldquo;{rej.text}&rdquo;
+                        ✗ {rej.sender}: &ldquo;{stripMessageMetadata(rej.text)}&rdquo;
                       </div>
                       <div className="text-orange-800">
-                        Reason: {rej.reason.replace('Rejected: ', '')} — Plan kept valid.
+                        Reason: {rej.reason.replace(/^Rejected:\s*/i, '')} — Plan kept valid.
                       </div>
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              ) : (
+                <div className="text-xs text-[#64748B]">No rejected messages.</div>
+              )}
+            </div>
 
             {/* Validation */}
             <div className="border-t border-slate-100 pt-6 space-y-3">
@@ -684,7 +740,7 @@ export default function App() {
                 Validation (6 Official Checks)
               </div>
               <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm font-medium">
-                {systemChecks.map((chk) => (
+                {officialChecks.map((chk) => (
                   <span
                     key={chk.id}
                     className={`inline-flex items-center gap-1.5 ${
@@ -697,6 +753,19 @@ export default function App() {
                       <X className="w-4 h-4 text-[#F97316]" />
                     )}
                     <span>{chk.label}</span>
+                  </span>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[#64748B]">
+                <span className="font-medium">Extra safeguards:</span>
+                {extraSafeguards.map((sg) => (
+                  <span key={sg.id} className="inline-flex items-center gap-1">
+                    {sg.passed ? (
+                      <Check className="w-3.5 h-3.5 text-[#2563EB]" />
+                    ) : (
+                      <X className="w-3.5 h-3.5 text-[#F97316]" />
+                    )}
+                    <span>{sg.label}</span>
                   </span>
                 ))}
               </div>
@@ -820,14 +889,19 @@ export default function App() {
           <>
             {/* Overview Action Bar */}
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-xs text-[#64748B] flex items-center gap-2">
-                <span>Mind to Machine Hackathon · Plan v{plan.version}</span>
-                <span>·</span>
-                <span className="inline-flex items-center gap-1.5 font-mono text-[#0F172A] font-medium">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#F97316]" />
-                  {Number(tokens.last_run || 0).toLocaleString()} run tokens
-                </span>
-                <span>({Number(tokens.session || 0).toLocaleString()} session)</span>
+              <div>
+                <h1 className="text-lg font-bold text-[#0F172A] font-display">
+                  Mind to Machine Hackathon: Event Plan
+                </h1>
+                <div className="text-xs text-[#64748B] flex items-center gap-2 mt-0.5">
+                  <span>Plan v{plan.version}</span>
+                  <span>·</span>
+                  <span className="inline-flex items-center gap-1.5 font-mono text-[#0F172A] font-medium">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#F97316]" />
+                    {Number(tokens.last_run || 0).toLocaleString()} run tokens
+                  </span>
+                  <span>({Number(tokens.session || 0).toLocaleString()} session tokens)</span>
+                </div>
               </div>
               <div className="flex items-center gap-2.5">
                 <button
@@ -905,23 +979,23 @@ export default function App() {
                 <div className="flex items-center justify-between text-xs font-semibold text-[#64748B]">
                   <span>Status</span>
                   <span className="font-mono text-[#F97316] font-semibold">
-                    {Number(tokens.last_run || 0).toLocaleString()} tok
+                    {Number(tokens.last_run || 0).toLocaleString()} tokens
                   </span>
                 </div>
                 <div className="mt-3">
                   <div className="text-2xl font-bold text-[#0F172A] font-mono tabular-nums">
-                    {passedSystemChecks}/6
+                    {passedOfficialChecks}/6
                   </div>
-                  <div className="text-sm text-[#64748B] mt-0.5">Checks Passed</div>
+                  <div className="text-sm text-[#64748B] mt-0.5">Official Checks Passed</div>
                 </div>
               </div>
             </section>
 
-            {/* AI Decisions (All 5 required Brief areas as 1-line rows with View Details) */}
+            {/* Plan (All 5 required Brief areas as 1-line rows with View Details) */}
             <section className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <h2 className="text-sm font-bold text-[#0F172A] font-display">AI Selected</h2>
-                <span className="text-xs text-[#64748B]">5 Required Areas</span>
+                <h2 className="text-sm font-bold text-[#0F172A] font-display">Plan</h2>
+                <span className="text-xs text-[#64748B]">Computed in code · 5 required areas</span>
               </div>
               <div className="divide-y divide-slate-100">
                 {/* 1. Venue */}
@@ -1030,10 +1104,13 @@ export default function App() {
 
             {/* Latest Activity + System Checks (2 clean columns) */}
             <section className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-              {/* Latest Activity (GitHub-style feed) */}
+              {/* Latest Activity (sorted newest first, 1 entry per message) */}
               <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <h2 className="text-sm font-bold text-[#0F172A] font-display">Latest Activity</h2>
+                  <div>
+                    <h2 className="text-sm font-bold text-[#0F172A] font-display">Latest Activity</h2>
+                    <p className="text-[11px] text-[#64748B]">Sorted by message # (newest first)</p>
+                  </div>
                   <button
                     onClick={() => {
                       setActivitySubView('feed');
@@ -1056,27 +1133,44 @@ export default function App() {
                       }
                       className="flex items-start gap-3 text-sm cursor-pointer hover:bg-[#F8FAFC] p-2 -mx-2 rounded-xl transition-colors"
                     >
-                      {item.status === 'rejected' ? (
+                      {item.status === 'rejected' || item.status === 'excluded' ? (
                         <X className="w-4 h-4 text-[#F97316] mt-0.5 shrink-0" />
+                      ) : item.status === 'applied' ? (
+                        <Check className="w-4 h-4 text-[#2563EB] mt-0.5 shrink-0" />
                       ) : (
-                        <Check
-                          className={`w-4 h-4 mt-0.5 shrink-0 ${
-                            item.status === 'success' ? 'text-[#2563EB]' : 'text-[#F97316]'
-                          }`}
-                        />
+                        <span className="w-4 h-4 mt-0.5 shrink-0 text-center text-xs font-bold text-[#64748B]">
+                          –
+                        </span>
                       )}
                       <div className="min-w-0 flex-1">
-                        <div
-                          className={`font-medium ${
-                            item.status === 'rejected' ? 'text-[#F97316]' : 'text-[#0F172A]'
-                          }`}
-                        >
-                          {item.title}
+                        <div className="flex items-center justify-between gap-2">
+                          <span
+                            className={`font-medium truncate ${
+                              item.status === 'rejected' ? 'text-[#F97316]' : 'text-[#0F172A]'
+                            }`}
+                          >
+                            {item.title}
+                          </span>
+                          <span
+                            className={`text-[11px] font-medium px-2 py-0.5 rounded-md shrink-0 ${
+                              item.status === 'applied'
+                                ? 'bg-blue-50 text-[#2563EB]'
+                                : item.status === 'rejected' || item.status === 'excluded'
+                                ? 'bg-orange-50 text-[#F97316]'
+                                : 'bg-slate-100 text-[#64748B]'
+                            }`}
+                          >
+                            {item.badgeLabel}
+                          </span>
                         </div>
                         <div className="text-xs text-[#64748B] mt-0.5">{item.detail}</div>
-                        {expandedActivityKey === item.id && item.rawText && (
-                          <div className="mt-2 p-2.5 bg-slate-100 rounded-lg text-xs text-[#0F172A] italic">
-                            &ldquo;{item.rawText}&rdquo;
+                        {expandedActivityKey === item.id && item.bodyQuote && (
+                          <div className="mt-2 p-2.5 bg-slate-100 rounded-lg text-xs text-[#0F172A] space-y-1">
+                            <div className="text-[11px] text-[#64748B]">
+                              {item.sender} · {item.channel}
+                              {item.date ? ` · ${item.date}` : ''}
+                            </div>
+                            <div className="italic">&ldquo;{item.bodyQuote}&rdquo;</div>
                           </div>
                         )}
                       </div>
@@ -1085,7 +1179,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* System Checks (6 clean checks, click to inspect explanation) */}
+              {/* System Checks (6 Official Brief Checks + Extra Safeguards) */}
               <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <h2 className="text-sm font-bold text-[#0F172A] font-display">System Checks</h2>
@@ -1093,13 +1187,13 @@ export default function App() {
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                  {systemChecks.map((chk) => (
+                  {officialChecks.map((chk) => (
                     <button
                       key={chk.id}
                       onClick={() =>
                         setSelectedCheckId(selectedCheckId === chk.id ? null : chk.id)
                       }
-                      className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl border text-sm font-medium transition-colors text-left ${
+                      className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-xs sm:text-sm font-medium transition-colors text-left ${
                         selectedCheckId === chk.id
                           ? 'border-[#2563EB] bg-blue-50 text-[#0F172A]'
                           : 'border-slate-200 bg-[#F8FAFC] hover:bg-slate-100 text-[#0F172A]'
@@ -1115,35 +1209,35 @@ export default function App() {
                   ))}
                 </div>
 
+                {/* Extra safeguards (separate from the official 6) */}
+                <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center gap-3 text-xs text-[#64748B]">
+                  <span className="font-medium">Extra safeguards:</span>
+                  {extraSafeguards.map((sg) => (
+                    <button
+                      key={sg.id}
+                      onClick={() =>
+                        setSelectedCheckId(selectedCheckId === sg.id ? null : sg.id)
+                      }
+                      className="inline-flex items-center gap-1 hover:text-[#0F172A]"
+                    >
+                      {sg.passed ? (
+                        <Check className="w-3.5 h-3.5 text-[#2563EB]" />
+                      ) : (
+                        <X className="w-3.5 h-3.5 text-[#F97316]" />
+                      )}
+                      <span>{sg.label}</span>
+                    </button>
+                  ))}
+                </div>
+
                 {selectedCheckId && (
                   <div className="p-3.5 bg-[#F8FAFC] border border-slate-200 rounded-xl text-xs text-[#64748B]">
                     <span className="font-semibold text-[#0F172A]">
-                      {systemChecks.find((c) => c.id === selectedCheckId)?.label}:{' '}
+                      {[...officialChecks, ...extraSafeguards].find((c) => c.id === selectedCheckId)?.label}:{' '}
                     </span>
-                    {systemChecks.find((c) => c.id === selectedCheckId)?.explanation}
+                    {[...officialChecks, ...extraSafeguards].find((c) => c.id === selectedCheckId)?.explanation}
                   </div>
                 )}
-
-                {/* Quick Demo Controls for Incremental Test */}
-                <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs text-[#64748B]">Test practice messages:</span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => runPackPath('tests/packs/practice_change.txt')}
-                      disabled={running}
-                      className="px-2.5 py-1 text-xs font-medium text-[#0F172A] bg-slate-100 hover:bg-blue-50 hover:text-[#2563EB] rounded-lg disabled:opacity-50 transition-colors"
-                    >
-                      + Valid Change
-                    </button>
-                    <button
-                      onClick={() => runPackPath('tests/packs/practice_wrong.txt')}
-                      disabled={running}
-                      className="px-2.5 py-1 text-xs font-medium text-[#F97316] bg-orange-50 hover:bg-orange-100 border border-[#F97316]/25 rounded-lg disabled:opacity-50 transition-colors"
-                    >
-                      + Wrong Message
-                    </button>
-                  </div>
-                </div>
               </div>
             </section>
           </>
@@ -1194,53 +1288,70 @@ export default function App() {
 
             {activitySubView === 'feed' && (
               <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
-                <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
+                <div className="border-b border-slate-100 pb-3 flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h2 className="text-base font-bold text-[#0F172A] font-display">
                       Activity &amp; Rejected Messages
                     </h2>
                     <p className="text-xs text-[#64748B] mt-0.5">
-                      Last run recomputed:{' '}
+                      Sorted by message # (newest first) · Last run recomputed:{' '}
                       <span className="font-mono font-semibold text-[#0F172A]">
-                        {recomputedAreas.length > 0 ? recomputedAreas.join(', ') : 'none (rejected)'}
+                        {recomputedAreas.length > 0 ? recomputedAreas.join(', ') : 'none (plan unchanged)'}
                       </span>
                     </p>
+                  </div>
+                  <div className="text-xs text-[#64748B]">
+                    {rejections.length === 0 ? 'No rejected messages' : `${rejections.length} rejected`}
                   </div>
                 </div>
 
                 <div className="divide-y divide-slate-100">
                   {activityFeed.map((item) => (
                     <div key={item.id} className="py-3.5 flex items-start gap-3.5">
-                      {item.status === 'rejected' ? (
+                      {item.status === 'rejected' || item.status === 'excluded' ? (
                         <div className="w-6 h-6 rounded-full bg-orange-50 border border-[#F97316]/30 flex items-center justify-center shrink-0 mt-0.5">
                           <X className="w-3.5 h-3.5 text-[#F97316]" />
                         </div>
-                      ) : item.status === 'success' ? (
+                      ) : item.status === 'applied' ? (
                         <div className="w-6 h-6 rounded-full bg-blue-50 border border-[#2563EB]/30 flex items-center justify-center shrink-0 mt-0.5">
                           <Check className="w-3.5 h-3.5 text-[#2563EB]" />
                         </div>
                       ) : (
-                        <div className="w-6 h-6 rounded-full bg-orange-50 border border-[#F97316]/30 flex items-center justify-center shrink-0 mt-0.5">
-                          <span className="text-xs font-bold text-[#F97316]">–</span>
+                        <div className="w-6 h-6 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0 mt-0.5">
+                          <span className="text-xs font-bold text-[#64748B]">–</span>
                         </div>
                       )}
                       <div className="flex-1 min-w-0">
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span
-                            className={`text-sm font-semibold ${
-                              item.status === 'rejected' ? 'text-[#F97316]' : 'text-[#0F172A]'
-                            }`}
-                          >
-                            {item.title}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={`text-sm font-semibold ${
+                                item.status === 'rejected' ? 'text-[#F97316]' : 'text-[#0F172A]'
+                              }`}
+                            >
+                              {item.title}
+                            </span>
+                            <span
+                              className={`text-[11px] font-medium px-2 py-0.5 rounded-md ${
+                                item.status === 'applied'
+                                  ? 'bg-blue-50 text-[#2563EB]'
+                                  : item.status === 'rejected' || item.status === 'excluded'
+                                  ? 'bg-orange-50 text-[#F97316]'
+                                  : 'bg-slate-100 text-[#64748B]'
+                              }`}
+                            >
+                              {item.badgeLabel}
+                            </span>
+                          </div>
+                          <span className="text-xs font-mono text-[#64748B]">
+                            {item.channel}
+                            {item.date ? ` · ${item.date}` : ''}
                           </span>
-                          {item.date && (
-                            <span className="text-xs font-mono text-[#64748B]">{item.date}</span>
-                          )}
                         </div>
                         <div className="text-xs text-[#64748B] mt-0.5">{item.detail}</div>
-                        {item.rawText && (
-                          <div className="mt-2 p-2.5 bg-[#F8FAFC] border border-slate-200 rounded-lg text-xs text-[#64748B] italic">
-                            &ldquo;{item.rawText}&rdquo;
+                        {item.bodyQuote && (
+                          <div className="mt-2 p-2.5 bg-[#F8FAFC] border border-slate-200 rounded-lg text-xs text-[#0F172A] italic">
+                            &ldquo;{item.bodyQuote}&rdquo;
                           </div>
                         )}
                       </div>
@@ -1258,8 +1369,15 @@ export default function App() {
                       Printed Execution Trace
                     </h2>
                     <p className="text-xs text-[#64748B] mt-0.5">
-                      Run: <span className="font-mono font-semibold text-[#F97316]">{Number(tokens.last_run || 0).toLocaleString()}</span> · Session total:{' '}
-                      <span className="font-mono font-semibold text-[#0F172A]">{Number(tokens.session || 0).toLocaleString()}</span> tokens
+                      AI read the messages (1 extraction call per run); Python computed &amp; validated all areas · Run:{' '}
+                      <span className="font-mono font-semibold text-[#F97316]">
+                        {Number(tokens.last_run || 0).toLocaleString()}
+                      </span>{' '}
+                      · Session total:{' '}
+                      <span className="font-mono font-semibold text-[#0F172A]">
+                        {Number(tokens.session || 0).toLocaleString()}
+                      </span>{' '}
+                      tokens
                     </p>
                   </div>
                   <button
@@ -1304,8 +1422,10 @@ export default function App() {
                             : 'border-slate-200 bg-[#F8FAFC] text-[#0F172A] hover:bg-slate-100'
                         }`}
                       >
-                        <div className="font-mono font-semibold">{rule.keyPattern}</div>
-                        <div className="text-[#64748B] mt-0.5">{rule.example}</div>
+                        <div className="font-semibold text-[#0F172A]">{rule.plainTitle}</div>
+                        <div className="font-mono text-[11px] text-[#64748B] mt-0.5">
+                          {rule.keyPattern}
+                        </div>
                       </button>
                     ))}
                   </div>
@@ -1319,7 +1439,9 @@ export default function App() {
                       </div>
                       <div>
                         Affected areas (Python-only):{' '}
-                        <strong className="text-[#F97316]">{ROUTER_PREVIEW_RULES[selectedRuleIdx].areas.join(', ')}</strong>
+                        <strong className="text-[#F97316]">
+                          {ROUTER_PREVIEW_RULES[selectedRuleIdx].areas.join(', ')}
+                        </strong>
                       </div>
                     </div>
                   </div>
@@ -1328,7 +1450,7 @@ export default function App() {
             )}
           </div>
         ) : activeTab === 'developer' ? (
-          /* Hidden Developer Mode: Trace, Prompt, JSON, Router, Config, HTML Report */
+          /* Hidden Developer Mode: Trace, Prompt, JSON, Router, Config, HTML Report + Practice Test Triggers */
           <div className="space-y-5">
             <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-1.5">
@@ -1355,12 +1477,28 @@ export default function App() {
                   </button>
                 ))}
               </div>
-              <button
-                onClick={() => setActiveTab('overview')}
-                className="text-xs font-medium text-[#64748B] hover:text-[#0F172A]"
-              >
-                Exit Developer Mode
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => runPackPath('tests/packs/practice_change.txt')}
+                  disabled={running}
+                  className="px-2.5 py-1 text-xs font-medium text-[#0F172A] bg-slate-100 hover:bg-blue-50 hover:text-[#2563EB] rounded-lg disabled:opacity-50"
+                >
+                  + Valid Change
+                </button>
+                <button
+                  onClick={() => runPackPath('tests/packs/practice_wrong.txt')}
+                  disabled={running}
+                  className="px-2.5 py-1 text-xs font-medium text-[#F97316] bg-orange-50 hover:bg-orange-100 border border-[#F97316]/25 rounded-lg disabled:opacity-50"
+                >
+                  + Wrong Message
+                </button>
+                <button
+                  onClick={() => setActiveTab('overview')}
+                  className="text-xs font-medium text-[#64748B] hover:text-[#0F172A] ml-2"
+                >
+                  Exit Developer Mode
+                </button>
+              </div>
             </div>
 
             {devSection === 'trace' && (
@@ -1456,8 +1594,10 @@ export default function App() {
                             : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
                         }`}
                       >
-                        <div className="font-mono font-semibold">{rule.keyPattern}</div>
-                        <div className="text-slate-500 mt-0.5">{rule.example}</div>
+                        <div className="font-semibold text-[#0F172A]">{rule.plainTitle}</div>
+                        <div className="font-mono text-[11px] text-[#64748B] mt-0.5">
+                          {rule.keyPattern}
+                        </div>
                       </button>
                     ))}
                   </div>
@@ -1493,7 +1633,7 @@ export default function App() {
                       className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white font-mono text-[#0F172A]"
                     >
                       <option value="gemini">gemini</option>
-                      <option value="ollama">ollama</option>
+                      <option value="ollama">ollama (local offline fallback)</option>
                       <option value="openai_compatible">openai_compatible</option>
                     </select>
                   </div>
@@ -1503,10 +1643,17 @@ export default function App() {
                     </label>
                     <input
                       type="text"
+                      list="model-presets"
                       defaultValue={config?.llm?.model || 'gemini-3.1-flash-lite'}
                       id="cfg-model"
                       className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white font-mono text-[#0F172A]"
                     />
+                    <datalist id="model-presets">
+                      <option value="gemini-3.1-flash-lite" />
+                      <option value="gemini-2.5-flash-lite" />
+                      <option value="qwen2.5:3b" />
+                      <option value="llama3.2:3b" />
+                    </datalist>
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-[#64748B] mb-1">
@@ -1621,17 +1768,27 @@ export default function App() {
                       {venue.slack} seats · Rs {Number(venue.price || 0).toLocaleString()}
                     </div>
                   </div>
-                  {(venue.rejected_options || []).length > 0 && (
+                  {((venue.rejected_options || []).length > 0 ||
+                    (venue.skipped_fitting || []).length > 0) && (
                     <div className="space-y-2">
                       <div className="text-xs font-semibold text-slate-700">
                         Why other venues were skipped:
                       </div>
-                      {venue.rejected_options.map((r: any, i: number) => (
+                      {(venue.rejected_options || []).map((r: any, i: number) => (
                         <div
-                          key={i}
+                          key={`rej-${i}`}
                           className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-700"
                         >
                           <strong>{r.name}</strong> ({r.capacity ?? 'N/A'} seats) — {r.reason}
+                        </div>
+                      ))}
+                      {(venue.skipped_fitting || []).map((sf: any, i: number) => (
+                        <div
+                          key={`skip-${i}`}
+                          className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-700"
+                        >
+                          <strong>{sf.name}</strong> ({sf.capacity ?? 'N/A'} seats, Rs{' '}
+                          {Number(sf.price || 0).toLocaleString()}) — {sf.reason}
                         </div>
                       ))}
                     </div>

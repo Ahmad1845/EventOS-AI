@@ -81,6 +81,7 @@ def solve_venue(
             "slack": 0,
             "features": [],
             "rejected_options": [],
+            "skipped_fitting": [],
             "fitting_candidates": [],
             "warnings": ["No venue options found"],
         }
@@ -152,6 +153,17 @@ def solve_venue(
         ov_slug = str(override_slug).strip().lower().replace(" ", "_")
         chosen = options_map.get(ov_slug)
         if chosen and chosen["capacity"] is not None and chosen["price"] is not None:
+            skipped_fitting = [
+                {
+                    "slug": c["slug"],
+                    "name": c["name"],
+                    "capacity": c["capacity"],
+                    "price": c["price"],
+                    "reason": f"fits ({c['capacity']} seats) but not selected due to venue override",
+                }
+                for c in candidates
+                if c["slug"] != chosen["slug"]
+            ]
             return {
                 "status": "ok",
                 "slug": chosen["slug"],
@@ -161,6 +173,7 @@ def solve_venue(
                 "slack": chosen["capacity"] - headcount,
                 "features": chosen["features"],
                 "rejected_options": [r for r in rejected if r["slug"] != chosen["slug"]],
+                "skipped_fitting": skipped_fitting,
                 "fitting_candidates": candidates,
                 "override_used": True,
                 "warnings": [],
@@ -176,11 +189,22 @@ def solve_venue(
             "slack": 0,
             "features": [],
             "rejected_options": rejected,
+            "skipped_fitting": [],
             "fitting_candidates": [],
             "warnings": ["No venue option satisfies capacity and feature requirements"],
         }
 
     chosen = candidates[0]
+    skipped_fitting = [
+        {
+            "slug": c["slug"],
+            "name": c["name"],
+            "capacity": c["capacity"],
+            "price": c["price"],
+            "reason": f"fits ({c['capacity']} seats) but costs more (Rs {c['price']} vs Rs {chosen['price']})",
+        }
+        for c in candidates[1:]
+    ]
     return {
         "status": "ok",
         "slug": chosen["slug"],
@@ -190,6 +214,7 @@ def solve_venue(
         "slack": chosen["capacity"] - headcount,
         "features": chosen["features"],
         "rejected_options": rejected,
+        "skipped_fitting": skipped_fitting,
         "fitting_candidates": candidates,
         "override_used": False,
         "warnings": [],

@@ -5,8 +5,19 @@ from typing import Any, Dict, List, Optional
 from core.trace import Trace
 
 
+ACRONYMS = {"dj", "av", "ac", "pa", "mc", "it", "vip", "wifi", "tv", "led", "id"}
+
+
 def _humanize_slug(slug: str) -> str:
-    return " ".join(w.capitalize() for w in slug.split("_") if w)
+    parts = [w for w in slug.split("_") if w]
+    out: List[str] = []
+    for w in parts:
+        lw = w.lower()
+        if lw in ACRONYMS or (len(w) == 1 and w.isalpha()):
+            out.append(lw.upper())
+        else:
+            out.append(w.capitalize())
+    return " ".join(out)
 
 
 def solve_budget(

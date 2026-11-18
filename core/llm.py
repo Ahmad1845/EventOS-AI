@@ -172,15 +172,24 @@ class LLMClient:
             f"https://generativelanguage.googleapis.com/v1beta/models/"
             f"{self.model}:generateContent?key={api_key}"
         )
+        gen_cfg: Dict[str, Any] = {
+            "responseMimeType": "application/json",
+            "temperature": self.temperature,
+            "thinkingConfig": {"thinkingBudget": 0},
+        }
         payload: Dict[str, Any] = {
             "systemInstruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": [{"text": user}]}],
-            "generationConfig": {
-                "responseMimeType": "application/json",
-                "temperature": self.temperature,
-            },
+            "generationConfig": gen_cfg,
         }
-        data = self._post_json(url, payload, {})
+        try:
+            data = self._post_json(url, payload, {})
+        except LLMError as exc:
+            if "thinking" in str(exc).lower():
+                gen_cfg.pop("thinkingConfig", None)
+                data = self._post_json(url, payload, {})
+            else:
+                raise
         elapsed = time.monotonic() - t0
         candidates = data.get("candidates") or []
         text = ""

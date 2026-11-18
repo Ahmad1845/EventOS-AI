@@ -47,6 +47,8 @@ def format_terminal_output(
     )
     for r in venue.get("rejected_options") or []:
         lines.append(f"              - rejected {r.get('name')}: {r.get('reason')}")
+    for sf in venue.get("skipped_fitting") or []:
+        lines.append(f"              - skipped {sf.get('name')}: {sf.get('reason')}")
 
     # 2. SCHEDULE
     blocks = sched.get("blocks") or []
@@ -183,12 +185,17 @@ def generate_html_report(
             f"</tr>"
         )
 
-    # Venue rejected options
+    # Venue rejected and skipped-fitting options
     venue_rej_html = []
     for r in venue.get("rejected_options") or []:
         venue_rej_html.append(
             f"<li><strong>{_esc(r.get('name'))}</strong> (seats {_esc(r.get('capacity'))}, Rs {_esc(r.get('price'))}): "
             f"<span class='muted'>{_esc(r.get('reason'))}</span></li>"
+        )
+    for sf in venue.get("skipped_fitting") or []:
+        venue_rej_html.append(
+            f"<li><strong>{_esc(sf.get('name'))}</strong> (seats {_esc(sf.get('capacity'))}, Rs {_esc(sf.get('price'))}): "
+            f"<span class='muted'>{_esc(sf.get('reason'))}</span></li>"
         )
 
     # Judging assignments preview

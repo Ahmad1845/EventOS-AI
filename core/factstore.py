@@ -54,8 +54,17 @@ class ProtectedFactViolation(Exception):
         )
 
 
+def detect_pack_year(texts: List[str], fallback_year: Optional[int] = None) -> int:
+    """Detect explicit 4-digit year (20xx) from raw pack texts; fallback to system clock year."""
+    for txt in texts:
+        m = re.search(r"\b(20\d{2})\b", str(txt or ""))
+        if m:
+            return int(m.group(1))
+    return fallback_year if fallback_year is not None else datetime.date.today().year
+
+
 def parse_message_date(raw_date: Optional[str], default_year: Optional[int] = None) -> Optional[str]:
-    """Parse date string into YYYY-MM-DD using system clock year when year is missing."""
+    """Parse day and month only, ignoring any year guessed by the model; use pack/system year."""
     if not raw_date:
         return None
     s = str(raw_date).strip()
@@ -64,28 +73,37 @@ def parse_message_date(raw_date: Optional[str], default_year: Optional[int] = No
 
     year = default_year if default_year is not None else datetime.date.today().year
 
-    # Match YYYY-MM-DD
+    # Match YYYY-MM-DD (ignore YYYY from model, keep MM-DD)
     m_iso = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})$", s)
     if m_iso:
-        y, mo, d = int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3))
-        return f"{y:04d}-{mo:02d}-{d:02d}"
+        mo, d = int(m_iso.group(2)), int(m_iso.group(3))
+        if 1 <= mo <= 12 and 1 <= d <= 31:
+            return f"{year:04d}-{mo:02d}-{d:02d}"
 
-    # Match DD Mon [YYYY] or Mon DD [YYYY]
-    m_dmy = re.match(r"^(\d{1,2})\s+([A-Za-z]+)(?:\s+(\d{4}))?$", s)
+    # Match MM-DD or MM/DD
+    m_md = re.match(r"^(\d{1,2})[-/](\d{1,2})$", s)
+    if m_md:
+        mo, d = int(m_md.group(1)), int(m_md.group(2))
+        if 1 <= mo <= 12 and 1 <= d <= 31:
+            return f"{year:04d}-{mo:02d}-{d:02d}"
+
+    # Match DD Mon [YYYY] (ignore optional year from model)
+    m_dmy = re.match(r"^(\d{1,2})\s+([A-Za-z]+)(?:\s+\d{4})?$", s)
     if m_dmy:
         d = int(m_dmy.group(1))
         mo_str = m_dmy.group(2).lower()
-        y = int(m_dmy.group(3)) if m_dmy.group(3) else year
-        mo = MONTH_MAP.get(mo_str[:3], 1)
-        return f"{y:04d}-{mo:02d}-{d:02d}"
+        mo = MONTH_MAP.get(mo_str[:3])
+        if mo and 1 <= d <= 31:
+            return f"{year:04d}-{mo:02d}-{d:02d}"
 
-    m_mdy = re.match(r"^([A-Za-z]+)\s+(\d{1,2})(?:,?\s*(\d{4}))?$", s)
+    # Match Mon DD [YYYY] (ignore optional year from model)
+    m_mdy = re.match(r"^([A-Za-z]+)\s+(\d{1,2})(?:,?\s*\d{4})?$", s)
     if m_mdy:
         mo_str = m_mdy.group(1).lower()
         d = int(m_mdy.group(2))
-        y = int(m_mdy.group(3)) if m_mdy.group(3) else year
-        mo = MONTH_MAP.get(mo_str[:3], 1)
-        return f"{y:04d}-{mo:02d}-{d:02d}"
+        mo = MONTH_MAP.get(mo_str[:3])
+        if mo and 1 <= d <= 31:
+            return f"{year:04d}-{mo:02d}-{d:02d}"
 
     return None
 
@@ -108,29 +126,31 @@ def _split_key_for_fuzzy(key: str) -> Optional[Tuple[str, str, str]]:
 
 
 def _has_distinct_designator(s1: str, s2: str) -> bool:
-    """Return True if two slugs have different designators like hall_a vs hall_b or north vs south."""
+    """Return True if two slugs have different designators like hall_a vs hall_b or basic vs standard."""
     t1 = s1.split("_")
     t2 = s2.split("_")
+    distinct_words = {
+        "north",
+        "south",
+        "east",
+        "west",
+        "alpha",
+        "beta",
+        "gamma",
+        "delta",
+        "basic",
+        "standard",
+        "economy",
+        "lite",
+        "vip",
+        "premium",
+        "deluxe",
+    }
+    diff_tokens = set(t1) ^ set(t2)
+    if diff_tokens & distinct_words:
+        return True
     if t1 and t2 and t1[-1] != t2[-1]:
-        # Single letter or number suffixes (e.g. hall_a vs hall_b, room_1 vs room_2)
         if len(t1[-1]) == 1 or len(t2[-1]) == 1 or t1[-1].isdigit() or t2[-1].isdigit():
-            return True
-        distinct_words = {
-            "north",
-            "south",
-            "east",
-            "west",
-            "alpha",
-            "beta",
-            "gamma",
-            "delta",
-            "basic",
-            "standard",
-            "economy",
-            "lite",
-            "vip",
-        }
-        if t1[-1] in distinct_words or t2[-1] in distinct_words:
             return True
     return False
 
@@ -141,7 +161,7 @@ def fuzzy_match_key(
     current_seq: Optional[int] = None,
     trace: Optional[Trace] = None,
 ) -> str:
-    """Compare new key to existing keys with same prefix using SequenceMatcher >= 0.8 on slug."""
+    """Compare new key to existing keys with same prefix using SequenceMatcher >= 0.8 or token subset."""
     existing_keys = {f["key"] for f in existing_facts if f.get("key")}
     if new_key in existing_keys:
         return new_key
@@ -162,6 +182,7 @@ def fuzzy_match_key(
 
     best_slug: Optional[str] = None
     best_ratio = 0.0
+    slug_tokens = set(slug.split("_"))
 
     for ek in sorted(existing_keys):
         ep = _split_key_for_fuzzy(ek)
@@ -173,8 +194,11 @@ def fuzzy_match_key(
         if _has_distinct_designator(slug, e_slug):
             continue
         ratio = difflib.SequenceMatcher(None, slug, e_slug).ratio()
-        if ratio >= 0.8 and ratio > best_ratio:
-            best_ratio = ratio
+        e_tokens = set(e_slug.split("_"))
+        is_subset = bool(slug_tokens and e_tokens and (slug_tokens <= e_tokens or e_tokens <= slug_tokens))
+        effective_score = max(ratio, 0.85) if is_subset else ratio
+        if effective_score >= 0.8 and effective_score > best_ratio:
+            best_ratio = effective_score
             best_slug = e_slug
 
     if best_slug and best_slug != slug:
@@ -204,16 +228,17 @@ def resolve_message_date(
     existing_facts: List[Dict[str, Any]],
     existing_messages: List[Dict[str, Any]],
     mode: str,
+    pack_year: Optional[int] = None,
 ) -> str:
-    """Assign YYYY-MM-DD date per Section 13.1."""
-    parsed = parse_message_date(raw_date)
+    """Assign YYYY-MM-DD date per Section 13.1 using pack_year or system clock year."""
+    parsed = parse_message_date(raw_date, default_year=pack_year)
     if parsed:
         return parsed
 
     known_dates = [
-        m.get("resolved_date") or (m.get("meta") or {}).get("date")
+        m.get("resolved_date")
         for m in existing_messages
-        if m.get("resolved_date") or (m.get("meta") or {}).get("date")
+        if m.get("resolved_date")
     ]
     fact_dates = [f.get("date") for f in existing_facts if f.get("date")]
     all_dates = [d for d in (known_dates + fact_dates) if isinstance(d, str) and len(d) == 10]
@@ -225,8 +250,8 @@ def resolve_message_date(
         if all_dates:
             return max(all_dates)
 
-    today_year = datetime.date.today().year
-    return f"{today_year:04d}-01-01"
+    yr = pack_year if pack_year is not None else datetime.date.today().year
+    return f"{yr:04d}-01-01"
 
 
 def get_winning_facts(facts: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -277,8 +302,33 @@ def apply_message_to_store(
 
     for raw_f in msg_facts:
         f = dict(raw_f)
+        raw_key = str(f["key"])
+
+        # If a relevant message (e.g. Finance bill update) is tagged budget.request.* or custom.budget.*,
+        # check if it matches an already-committed or approved_extra budget key before rewriting.
+        if relevance == "relevant" and (
+            raw_key.startswith("budget.request.") or raw_key.startswith("custom.budget.")
+        ):
+            slug_part = raw_key.split(".", 2)[2]
+            for target_prefix in ("budget.committed", "budget.approved_extra"):
+                probe = f"{target_prefix}.{slug_part}"
+                matched_probe = fuzzy_match_key(
+                    probe, candidate_facts, current_seq=seq, trace=trace
+                )
+                if any(
+                    ef.get("key") == matched_probe and ef.get("seq") != seq
+                    for ef in candidate_facts
+                ):
+                    raw_key = matched_probe
+                    f["kind"] = (
+                        "commitment"
+                        if target_prefix == "budget.committed"
+                        else "approval"
+                    )
+                    break
+
         key = fuzzy_match_key(
-            str(f["key"]), candidate_facts, current_seq=seq, trace=trace
+            raw_key, candidate_facts, current_seq=seq, trace=trace
         )
 
         # If message is unapproved_request, rewrite key under budget.request.<slug>

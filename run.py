@@ -11,6 +11,7 @@ from core.extractor import ExtractionFailed, Extractor
 from core.factstore import (
     ProtectedFactViolation,
     apply_message_to_store,
+    detect_pack_year,
     resolve_message_date,
 )
 from core.ingest import ingest_file
@@ -29,6 +30,61 @@ from core.state import (
 )
 from core.trace import Trace
 from core.validator import validate_plan
+
+
+def _infer_fallback_year(state: Dict[str, Any]) -> Optional[int]:
+    for m in state.get("messages") or []:
+        rd = str(m.get("resolved_date") or "")
+        if len(rd) >= 4 and rd[:4].isdigit():
+            return int(rd[:4])
+    return None
+
+
+def _refresh_message_statuses(
+    messages: List[Dict[str, Any]],
+    facts: List[Dict[str, Any]],
+    constraints: List[Dict[str, Any]],
+) -> None:
+    """Assign one mutually exclusive status per message: rejected, ignored, excluded, superseded, or applied."""
+    facts_by_seq: Dict[int, List[Dict[str, Any]]] = {}
+    for f in facts:
+        facts_by_seq.setdefault(int(f.get("seq") or 0), []).append(f)
+    cons_by_seq: Dict[int, List[Dict[str, Any]]] = {}
+    for c in constraints:
+        cons_by_seq.setdefault(int(c.get("seq") or 0), []).append(c)
+
+    for m in messages:
+        cur_status = m.get("status")
+        if cur_status in ("rejected", "ignored"):
+            m.setdefault("superseded_by", [])
+            continue
+
+        seq = int(m.get("seq") or 0)
+        meta = m.get("meta") or {}
+        m_facts = facts_by_seq.get(seq, [])
+        m_cons = cons_by_seq.get(seq, [])
+
+        if meta.get("relevance") == "unapproved_request" or (
+            m_facts and all(f.get("kind") == "request" for f in m_facts) and not m_cons
+        ):
+            m["status"] = "excluded"
+            m["superseded_by"] = []
+            m["status_detail"] = "Unapproved request (excluded from budget)"
+            continue
+
+        if m_facts and not m_cons and all(f.get("superseded_by") is not None for f in m_facts):
+            sup_by = sorted(
+                {int(f["superseded_by"]) for f in m_facts if f.get("superseded_by") is not None}
+            )
+            m["status"] = "superseded"
+            m["superseded_by"] = sup_by
+            m["status_detail"] = "Superseded by " + ", ".join(f"#{s}" for s in sup_by)
+            continue
+
+        m["status"] = "applied"
+        m["superseded_by"] = []
+        m["status_detail"] = "Applied to plan"
+
 
 
 def load_config(path: str = "config.json") -> Dict[str, Any]:
@@ -125,7 +181,10 @@ def run_pipeline(
             num_messages=len(new_blocks),
         )
 
-        known_keys = get_known_keys(state) if mode == "update" else []
+        pack_year = detect_pack_year(
+            [b["text"] for b in new_blocks], fallback_year=_infer_fallback_year(state)
+        )
+        known_keys: List[str] = []
         extractor = Extractor(llm_client, trace)
 
         try:
@@ -182,11 +241,20 @@ def run_pipeline(
                     },
                 )
                 r_date = resolve_message_date(
-                    meta.get("date"), candidate_facts, candidate_messages, mode="fresh"
+                    meta.get("date"),
+                    candidate_facts,
+                    candidate_messages,
+                    mode="fresh",
+                    pack_year=pack_year,
                 )
                 m_facts = facts_by_id.get(bid, [])
                 m_cons = constraints_by_id.get(bid, [])
-                status_val = "ignored" if meta.get("relevance") == "irrelevant" else "applied"
+                if meta.get("relevance") == "irrelevant":
+                    status_val = "ignored"
+                elif meta.get("relevance") == "unapproved_request":
+                    status_val = "excluded"
+                else:
+                    status_val = "applied"
                 try:
                     apply_message_to_store(
                         message_meta=meta,
@@ -278,7 +346,11 @@ def run_pipeline(
                 )
                 sender = str(meta.get("sender") or "Unknown")
                 r_date = resolve_message_date(
-                    meta.get("date"), state["facts"], state["messages"], mode="update"
+                    meta.get("date"),
+                    state["facts"],
+                    state["messages"],
+                    mode="update",
+                    pack_year=pack_year,
                 )
                 m_facts = facts_by_id.get(bid, [])
                 m_cons = constraints_by_id.get(bid, [])
@@ -426,6 +498,11 @@ def run_pipeline(
                     )
 
         # Finalize state and outputs
+        _refresh_message_statuses(
+            state.get("messages") or [],
+            state.get("facts") or [],
+            state.get("constraints") or [],
+        )
         elapsed_seconds = round(time.monotonic() - t_start, 2)
         state["runs"] = run_number
         state["last_run_seconds"] = elapsed_seconds
