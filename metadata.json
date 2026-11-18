@@ -1,0 +1,6 @@
+{
+  "name": "EventOS — MTM 2.0 Hackathon Planner & Trace Engine",
+  "description": "Deterministic agentic event planning system and trace engine for the Mind to Machine Hackathon (18 Nov 2026, Islamabad).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

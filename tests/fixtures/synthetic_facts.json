@@ -1,0 +1,28 @@
+{
+  "facts": [
+    {"msg": 1, "key": "event.students", "value": 90, "unit": "students", "kind": "approval", "seq": 1, "date": "2026-11-01", "sender": "Director", "superseded_by": null},
+    {"msg": 1, "key": "event.team_size", "value": 3, "unit": "students", "kind": "approval", "seq": 1, "date": "2026-11-01", "sender": "Director", "superseded_by": null},
+    {"msg": 1, "key": "event.staff", "value": 6, "unit": "staff", "kind": "approval", "seq": 1, "date": "2026-11-01", "sender": "Director", "superseded_by": null},
+    {"msg": 1, "key": "event.duration_minutes", "value": 180, "unit": "minutes", "kind": "approval", "seq": 1, "date": "2026-11-01", "sender": "Director", "superseded_by": null},
+    {"msg": 1, "key": "budget.cap", "value": 400000, "unit": "PKR", "kind": "approval", "seq": 1, "date": "2026-11-01", "sender": "Director", "superseded_by": null},
+    {"msg": 2, "key": "venue.option.room_alpha.capacity", "value": 60, "unit": "seats", "kind": "capacity", "seq": 2, "date": "2026-11-02", "sender": "Halls", "superseded_by": null},
+    {"msg": 2, "key": "venue.option.room_alpha.price", "value": 30000, "unit": "PKR", "kind": "quote", "seq": 2, "date": "2026-11-02", "sender": "Halls", "superseded_by": null},
+    {"msg": 2, "key": "venue.option.room_beta.capacity", "value": 120, "unit": "seats", "kind": "capacity", "seq": 2, "date": "2026-11-02", "sender": "Halls", "superseded_by": null},
+    {"msg": 2, "key": "venue.option.room_beta.price", "value": 90000, "unit": "PKR", "kind": "quote", "seq": 2, "date": "2026-11-02", "sender": "Halls", "superseded_by": null},
+    {"msg": 2, "key": "venue.option.room_gamma.capacity", "value": 120, "unit": "seats", "kind": "capacity", "seq": 2, "date": "2026-11-02", "sender": "Halls", "superseded_by": null},
+    {"msg": 2, "key": "venue.option.room_gamma.price", "value": 110000, "unit": "PKR", "kind": "quote", "seq": 2, "date": "2026-11-02", "sender": "Halls", "superseded_by": null},
+    {"msg": 2, "key": "venue.option.room_gamma.feature", "value": "backup_power", "unit": null, "kind": "count", "seq": 2, "date": "2026-11-02", "sender": "Halls", "superseded_by": null},
+    {"msg": 3, "key": "food.option.standard_meal.unit_price", "value": 900, "unit": "PKR", "kind": "quote", "seq": 3, "date": "2026-11-03", "sender": "Kitchen", "superseded_by": null},
+    {"msg": 3, "key": "food.option.standard_meal.is_default", "value": true, "unit": null, "kind": "quote", "seq": 3, "date": "2026-11-03", "sender": "Kitchen", "superseded_by": null},
+    {"msg": 3, "key": "food.option.lite_meal.unit_price", "value": 500, "unit": "PKR", "kind": "quote", "seq": 3, "date": "2026-11-03", "sender": "Kitchen", "superseded_by": null},
+    {"msg": 3, "key": "food.delivery_fee", "value": 0, "unit": "PKR", "kind": "quote", "seq": 3, "date": "2026-11-03", "sender": "Kitchen", "superseded_by": null},
+    {"msg": 4, "key": "judging.confirmed", "value": 12, "unit": "judges", "kind": "count", "seq": 4, "date": "2026-11-04", "sender": "Judging", "superseded_by": null},
+    {"msg": 4, "key": "judging.rate", "value": 4000, "unit": "PKR", "kind": "rate", "seq": 4, "date": "2026-11-04", "sender": "Judging", "superseded_by": null},
+    {"msg": 4, "key": "judging.minutes_per_team", "value": 10, "unit": "minutes", "kind": "duration", "seq": 4, "date": "2026-11-04", "sender": "Judging", "superseded_by": null},
+    {"msg": 4, "key": "judging.max_teams_per_judge", "value": 3, "unit": "teams", "kind": "count", "seq": 4, "date": "2026-11-04", "sender": "Judging", "superseded_by": null},
+    {"msg": 5, "key": "budget.committed.banners", "value": 50000, "unit": "PKR", "kind": "commitment", "seq": 5, "date": "2026-11-05", "sender": "Finance", "superseded_by": null}
+  ],
+  "constraints": [
+    {"msg": 1, "area": "schedule", "type": "schedule_block", "target": "tea_break", "op": "==", "value": 10, "unit": "minutes", "hard": true, "text": "10-minute tea break"}
+  ]
+}

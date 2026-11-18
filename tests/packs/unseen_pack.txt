@@ -1,0 +1,23 @@
+1. From: Rector Office, email | Date: 5 Nov
+"Approved: 5-hour AI buildathon for 120 students in teams of 4. Total budget cap is Rs 580,000. 8 staff members will be on duty. Event must start at 12:00 and end by 17:00. Keep a 20-minute asr_prayer break and a 15-minute networking session in the schedule."
+
+2. From: Capital Convention Center, email | Date: 1 Nov
+"Auditorium West seats 100 at Rs 70,000. Gallery North seats 160 at Rs 110,000. Gallery South seats 160 at Rs 135,000. Main Dome seats 250 at Rs 190,000. Gallery South and Main Dome have a standby generator and projector."
+
+3. From: Facilities Admin, notice | Date: 6 Nov
+"Mandatory rule for all campus events this week: the chosen venue must have a standby generator due to grid maintenance."
+
+4. From: Khyber Foods, WhatsApp | Date: 18 Oct
+"Standard biryani box Rs 900 per head."
+
+5. From: Khyber Foods, WhatsApp | Date: 10 Nov
+"AoA! Standard biryani box ab Rs 1,100 per head hoga, economy box Rs 750 per head. Delivery fee Rs 5,000."
+
+6. From: Panel Lead, email | Date: 8 Nov
+"15 judges confirmed. Honorarium is Rs 6,000 each. Each judge needs 12 minutes per team and may evaluate at most 3 teams."
+
+7. From: Accounts Team, email | Date: 9 Nov
+"Committed spend already paid: shields Rs 80,000, cloud credits Rs 30,000. Also, total food cost must not exceed Rs 180,000 (food.cost <= 180000)."
+
+8. From: Media Club, WhatsApp | Date: 11 Nov
+"Can we book a drone videographer for Rs 45,000?"
